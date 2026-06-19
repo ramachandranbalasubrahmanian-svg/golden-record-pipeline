@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,6 +14,18 @@ class Settings(BaseSettings):
     embedding_dimensions: int = 1536
     max_rag_chunks: int = 10
     environment: str = "development"
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def ensure_asyncpg(cls, v: str) -> str:
+        if v.startswith("postgresql://"):
+            return v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return v
+
+    @field_validator("sync_database_url", mode="before")
+    @classmethod
+    def ensure_sync(cls, v: str) -> str:
+        return v.replace("postgresql+asyncpg://", "postgresql://", 1)
 
 
 settings = Settings()
