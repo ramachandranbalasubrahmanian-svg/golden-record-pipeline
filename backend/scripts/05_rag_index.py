@@ -22,6 +22,8 @@ CHUNK_GROUPS = {
     "kyc_compliance": ["kyc_status", "kyc_tier", "kyc_verified_at", "kyc_expiry_at"],
     "risk_profile": ["risk_rating", "risk_score"],
     "sanctions_pep": ["is_pep", "pep_type", "pep_detected_at", "is_sanctioned", "sanctions_list", "sanctions_detected_at"],
+    "customer_lifecycle": ["onboarded_at", "source_count", "confidence_score"],
+    "confidence_metadata": ["confidence_score", "winning_sources", "source_count"],
 }
 
 BOOL_LABELS = {"is_pep": "PEP Status", "is_sanctioned": "Sanctions Status"}

@@ -28,7 +28,7 @@ def main():
     ss = source_systems.split_to_sources(
         customers_path=str(raw / "customers_master.csv"),
         output_dir=str(raw),
-        crm_ratio=0.55, kyc_ratio=0.45, cbs_ratio=0.30, risk_ratio=0.35,
+        crm_ratio=0.90, kyc_ratio=0.64, cbs_ratio=0.46, risk_ratio=0.60,
     )
     print(f"  ✓ CRM: {ss['crm']} | KYC: {ss['kyc']} | CBS: {ss['cbs']} | RISK: {ss['risk']}")
 
