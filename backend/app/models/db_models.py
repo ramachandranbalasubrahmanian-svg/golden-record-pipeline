@@ -162,7 +162,7 @@ class RAGChunk(Base):
     chunk_type: Mapped[str] = mapped_column(String(50), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_: Mapped[Optional[dict]] = mapped_column("metadata", JSONB)
-    embedding = mapped_column(Vector(1536) if _HAS_PGVECTOR and Vector else Text)
+    embedding = mapped_column(Vector(384) if _HAS_PGVECTOR and Vector else Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

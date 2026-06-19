@@ -1,4 +1,4 @@
-"""05_rag_index.py — Embed golden record chunks and store in pgvector."""
+"""05_rag_index.py — Embed golden record chunks and store in pgvector using sentence-transformers (free)."""
 import sys
 import json
 import time
@@ -8,7 +8,6 @@ from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import openai as openai_lib
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from app.config import settings
@@ -29,9 +28,26 @@ CHUNK_GROUPS = {
 BOOL_LABELS = {"is_pep": "PEP Status", "is_sanctioned": "Sanctions Status"}
 
 
-def build_chunk_text(customer: dict, chunk_type: str, fields: list[str]) -> str:
+def load_model():
+    try:
+        from sentence_transformers import SentenceTransformer
+        print("Loading sentence-transformers model (all-MiniLM-L6-v2)...")
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+        print("  ✓ Model loaded (384-dim, free, no API key needed)")
+        return model
+    except ImportError:
+        print("Installing sentence-transformers...")
+        import subprocess
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "sentence-transformers"], check=True)
+        from sentence_transformers import SentenceTransformer
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+        print("  ✓ Model loaded")
+        return model
+
+
+def build_chunk_text(customer: dict, chunk_type: str, fields: list) -> str:
     cid = str(customer.get("customer_id", ""))[:8]
-    full_name = customer.get("full_legal_name") or f"{customer.get('first_name','')} {customer.get('last_name','')}".strip()
+    full_name = customer.get("full_legal_name") or f"{customer.get('first_name', '')} {customer.get('last_name', '')}".strip()
     lines = [
         f"Customer {full_name} (ID: {cid}...)",
         f"[CHUNK_TYPE: {chunk_type.upper()}]",
@@ -52,7 +68,6 @@ def build_chunk_text(customer: dict, chunk_type: str, fields: list[str]) -> str:
             except Exception:
                 pass
         lines.append(f"{label}: {val}")
-
     meta = (
         f"[Confidence: {float(customer.get('confidence_score') or 0) * 100:.1f}%] "
         f"[Sources: {customer.get('source_count', 1)}] "
@@ -62,31 +77,28 @@ def build_chunk_text(customer: dict, chunk_type: str, fields: list[str]) -> str:
     return "\n".join(lines)
 
 
-def embed_batch(texts: list[str], client) -> list[list[float]]:
-    batch_size = 100
-    all_embeddings = []
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i:i + batch_size]
-        response = client.embeddings.create(input=batch, model="text-embedding-3-small")
-        all_embeddings.extend([d.embedding for d in response.data])
-        if i + batch_size < len(texts):
-            time.sleep(0.5)
-    return all_embeddings
-
-
-def index_all_customers(db_engine, openai_client) -> dict:
+def index_all_customers(model) -> dict:
     with Session() as db:
         rows = db.execute(text("SELECT * FROM golden_records LIMIT 5000")).mappings().all()
         customers = [dict(r) for r in rows]
 
     print(f"Indexing {len(customers)} customers...")
+
+    # Drop and recreate rag_chunks to ensure correct vector dimension
+    with Session() as db:
+        db.execute(text("DROP TABLE IF EXISTS rag_chunks CASCADE"))
+        db.commit()
+    from app.database import Base
+    from app.models import db_models  # noqa
+    with engine.begin() as c:
+        Base.metadata.create_all(c)
+
     total_chunks = 0
-    estimated_tokens = 0
     batch_size = 50
 
     for batch_start in range(0, len(customers), batch_size):
         batch = customers[batch_start:batch_start + batch_size]
-        sys.stdout.write(f"\rIndexing: {batch_start + len(batch)}/{len(customers)} customers...")
+        sys.stdout.write(f"\r  {batch_start + len(batch)}/{len(customers)} customers...")
         sys.stdout.flush()
 
         chunk_texts = []
@@ -100,24 +112,19 @@ def index_all_customers(db_engine, openai_client) -> dict:
                     continue
                 chunk_texts.append(text_content)
                 chunk_meta.append({"customer_id": cid, "chunk_type": chunk_type, "content": text_content})
-                estimated_tokens += len(text_content.split()) * 1.3
 
         if not chunk_texts:
             continue
 
-        embeddings = embed_batch(chunk_texts, openai_client)
+        embeddings = model.encode(chunk_texts, batch_size=64, show_progress_bar=False).tolist()
 
         with Session() as db:
-            # Delete existing chunks for this batch
-            cids = [m["customer_id"] for m in chunk_meta]
-            for cid in set(cids):
-                db.execute(text("DELETE FROM rag_chunks WHERE customer_id = cast(:cid as uuid)"), {"cid": cid})
-
             for meta, embedding in zip(chunk_meta, embeddings):
                 vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
                 db.execute(text("""
                     INSERT INTO rag_chunks (id, customer_id, chunk_type, content, metadata, embedding, created_at, updated_at)
                     VALUES (gen_random_uuid(), cast(:cid as uuid), :ctype, :content, cast(:meta as jsonb), cast(:emb as vector), NOW(), NOW())
+                    ON CONFLICT DO NOTHING
                 """), {
                     "cid": meta["customer_id"],
                     "ctype": meta["chunk_type"],
@@ -128,15 +135,13 @@ def index_all_customers(db_engine, openai_client) -> dict:
             db.commit()
         total_chunks += len(chunk_texts)
 
-    cost_estimate = (estimated_tokens / 1_000_000) * 0.02
     avg_chunks = total_chunks / max(len(customers), 1)
     print(f"\n✅ Indexed {len(customers)} customers × {avg_chunks:.1f} chunks = {total_chunks} total chunks")
-    print(f"   Embedding cost estimate: ${cost_estimate:.2f} (text-embedding-3-small @ $0.02/1M tokens)")
-
-    return {"customers_indexed": len(customers), "chunks_created": total_chunks, "cost_estimate": cost_estimate}
+    print("   Cost: $0.00 (sentence-transformers, runs locally)")
+    return {"customers_indexed": len(customers), "chunks_created": total_chunks, "cost_estimate": 0.0}
 
 
 if __name__ == "__main__":
-    client = openai_lib.OpenAI(api_key=settings.openai_api_key)
-    result = index_all_customers(engine, client)
+    model = load_model()
+    result = index_all_customers(model)
     print(f"\nDone: {result}")
