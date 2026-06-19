@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.env
+*.dump
+ml/er_model.pkl
+ml/er_metrics.json
+.pytest_cache/
+node_modules/
+dist/
+.DS_Store
+backend/data/raw/
+backend/.venv/
+.venv/
