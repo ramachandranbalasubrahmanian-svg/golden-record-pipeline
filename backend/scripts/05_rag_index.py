@@ -111,13 +111,13 @@ def index_all_customers(db_engine, openai_client) -> dict:
             # Delete existing chunks for this batch
             cids = [m["customer_id"] for m in chunk_meta]
             for cid in set(cids):
-                db.execute(text("DELETE FROM rag_chunks WHERE customer_id = :cid::uuid"), {"cid": cid})
+                db.execute(text("DELETE FROM rag_chunks WHERE customer_id = cast(:cid as uuid)"), {"cid": cid})
 
             for meta, embedding in zip(chunk_meta, embeddings):
                 vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
                 db.execute(text("""
                     INSERT INTO rag_chunks (id, customer_id, chunk_type, content, metadata, embedding, created_at, updated_at)
-                    VALUES (gen_random_uuid(), :cid::uuid, :ctype, :content, :meta::jsonb, :emb::vector, NOW(), NOW())
+                    VALUES (gen_random_uuid(), cast(:cid as uuid), :ctype, :content, cast(:meta as jsonb), cast(:emb as vector), NOW(), NOW())
                 """), {
                     "cid": meta["customer_id"],
                     "ctype": meta["chunk_type"],
