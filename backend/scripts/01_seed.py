@@ -12,32 +12,47 @@ import psycopg2
 from app.config import settings
 
 SYNC_URL = settings.sync_database_url
-# Parse psycopg2 conn string from SQLAlchemy URL
 _url = SYNC_URL.replace("postgresql://", "")
 _user_pass, _rest = _url.split("@", 1)
 _user, _pass = _user_pass.split(":", 1)
 _host_port, _db = _rest.rsplit("/", 1)
-if ":" in _host_port:
-    _host, _port = _host_port.split(":", 1)
-else:
-    _host, _port = _host_port, "5432"
+_host, _port = (_host_port.split(":", 1) if ":" in _host_port else (_host_port, "5432"))
 
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 
 
+def _safe(v):
+    if v is None:
+        return None
+    s = str(v).strip()
+    return None if s in ("", "nan", "None", "NaT") else s
+
+
+def _parse_date(v):
+    if not v:
+        return None
+    s = str(v).strip()
+    if not s or s in ("nan", "None", "NaT"):
+        return None
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return None
+
+
 def get_conn():
-    return psycopg2.connect(
+    conn = psycopg2.connect(
         host=_host, port=int(_port), dbname=_db, user=_user, password=_pass
     )
+    with conn.cursor() as cur:
+        cur.execute("SET datestyle = 'ISO, DMY'")
+    conn.commit()
+    return conn
 
 
 def create_extensions_and_tables(conn):
-    with conn.cursor() as cur:
-        cur.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"')
-        cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
-        # Create tables via SQLAlchemy
-        conn.commit()
-    # Use SQLAlchemy to create tables
     from sqlalchemy import create_engine, text
     from app.database import Base
     from app.models import db_models  # noqa
@@ -47,13 +62,6 @@ def create_extensions_and_tables(conn):
         c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         Base.metadata.create_all(c)
     print("✓ Extensions and tables created")
-
-
-def _safe(val):
-    if val is None or (isinstance(val, float) and val != val):
-        return None
-    s = str(val).strip()
-    return None if s in ("", "nan", "None", "NaT") else s
 
 
 def seed_source_records(conn):
@@ -70,8 +78,7 @@ def seed_source_records(conn):
             print(f"  ⚠ {fname} not found — skipping")
             continue
         with open(path) as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
+            rows = list(csv.DictReader(f))
 
         with conn.cursor() as cur:
             inserted = 0
@@ -82,26 +89,31 @@ def seed_source_records(conn):
                     INSERT INTO source_records (
                         id, external_id, source_system, first_name, last_name, full_name,
                         date_of_birth, email, phone, address_line1, city, country, nationality,
-                        kyc_status, kyc_tier, risk_rating, is_pep, is_sanctioned, raw_data, ingested_at
+                        kyc_status, kyc_tier, risk_rating, is_pep, is_sanctioned,
+                        ingested_at, quarantined
                     ) VALUES (
                         gen_random_uuid(), %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, false
                     ) ON CONFLICT DO NOTHING
                     """,
                     (
                         ext_id, system,
-                        _safe(row.get("first_name")), _safe(row.get("last_name")),
-                        _safe(row.get("full_legal_name") or row.get("full_name") or row.get("full_name")),
-                        _safe(row.get("date_of_birth")),
-                        _safe(row.get("email")), _safe(row.get("phone")),
-                        _safe(row.get("address_line1")), _safe(row.get("city")),
-                        _safe(row.get("country")), _safe(row.get("nationality")),
-                        _safe(row.get("kyc_status")), _safe(row.get("kyc_tier")),
+                        _safe(row.get("first_name")),
+                        _safe(row.get("last_name")),
+                        _safe(row.get("full_legal_name") or row.get("full_name")),
+                        _parse_date(row.get("date_of_birth")),
+                        _safe(row.get("email")),
+                        _safe(row.get("phone")),
+                        _safe(row.get("address_line1")),
+                        _safe(row.get("city")),
+                        _safe(row.get("country")),
+                        _safe(row.get("nationality")),
+                        _safe(row.get("kyc_status")),
+                        _safe(row.get("kyc_tier")),
                         _safe(row.get("risk_rating")),
                         row.get("is_pep") in (True, "True", "true", "1"),
                         row.get("is_sanctioned") in (True, "True", "true", "1"),
-                        json.dumps({k: v for k, v in row.items()}),
                         datetime.utcnow(),
                     ),
                 )
@@ -121,7 +133,6 @@ def seed_transactions(conn):
         print("  ⚠ transactions.csv not found — skipping")
         return 0
 
-    # We need golden_records to exist first — seed transactions only if golden records exist
     with conn.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM golden_records")
         gr_count = cur.fetchone()[0]
@@ -131,8 +142,7 @@ def seed_transactions(conn):
         return 0
 
     with open(path) as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
+        rows = list(csv.DictReader(f))
 
     with conn.cursor() as cur:
         n = 0
@@ -150,7 +160,7 @@ def seed_transactions(conn):
                 (
                     _safe(row.get("transaction_id")) or str(uuid.uuid4()),
                     _safe(row.get("customer_id")),
-                    _safe(row.get("transaction_date")),
+                    _parse_date(row.get("transaction_date")) or row.get("transaction_date"),
                     float(row.get("amount") or 0),
                     _safe(row.get("currency")) or "USD",
                     _safe(row.get("transaction_type")),
@@ -164,7 +174,7 @@ def seed_transactions(conn):
             )
             n += 1
         conn.commit()
-    print(f"Seeded {n} transactions")
+    print(f"  ✓ {n} transactions seeded")
     return n
 
 

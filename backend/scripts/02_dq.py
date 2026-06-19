@@ -6,7 +6,7 @@ from collections import defaultdict
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from sqlalchemy import create_engine, text, update
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from app.config import settings
 from app.pipeline.data_quality import validate_record
@@ -47,13 +47,15 @@ def main():
 
     print(f"Writing DQ results to database ({len(updates):,} updates)...")
     with Session() as db:
-        for batch in [updates[i:i+500] for i in range(0, len(updates), 500)]:
+        for batch in [updates[i:i + 500] for i in range(0, len(updates), 500)]:
             for upd in batch:
                 db.execute(
                     text("""
                         UPDATE source_records
-                        SET dq_score = :dq_score, dq_report = :dq_report::jsonb, quarantined = :quarantined
-                        WHERE id = :id::uuid
+                        SET dq_score = :dq_score,
+                            dq_report = cast(:dq_report as jsonb),
+                            quarantined = :quarantined
+                        WHERE id = cast(:id as uuid)
                     """),
                     upd,
                 )

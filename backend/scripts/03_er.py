@@ -1,5 +1,6 @@
 """03_er.py — Entity Resolution: find duplicates, form clusters, populate stewardship queue."""
 import sys
+import json
 import uuid
 from pathlib import Path
 
@@ -30,27 +31,26 @@ def main():
 
     print(f"Writing {len(match_pairs)} match pairs to database...")
     with Session() as db:
-        for batch in [match_pairs[i:i+200] for i in range(0, len(match_pairs), 200)]:
+        for batch in [match_pairs[i:i + 200] for i in range(0, len(match_pairs), 200)]:
             for pair in batch:
                 pid = str(uuid.uuid4())
                 db.execute(text("""
                     INSERT INTO match_pairs (id, record_a_id, record_b_id, match_probability, match_features, status, created_at)
-                    VALUES (:id, :a::uuid, :b::uuid, :prob, :features::jsonb, :status, NOW())
+                    VALUES (:id, cast(:a as uuid), cast(:b as uuid), :prob, cast(:features as jsonb), :status, NOW())
                     ON CONFLICT DO NOTHING
                 """), {
                     "id": pid,
                     "a": pair["record_a_id"],
                     "b": pair["record_b_id"],
                     "prob": float(pair["match_probability"]),
-                    "features": str(pair.get("match_features", {})).replace("'", '"'),
+                    "features": "{}",
                     "status": pair.get("status", "pending"),
                 })
-                # Add to stewardship queue if pending
                 if pair.get("status") == "pending":
                     priority = max(1, min(10, int((1.0 - float(pair["match_probability"])) * 10)))
                     db.execute(text("""
                         INSERT INTO stewardship_queue (id, pair_id, priority, status, created_at)
-                        VALUES (gen_random_uuid(), :pid::uuid, :priority, 'open', NOW())
+                        VALUES (gen_random_uuid(), cast(:pid as uuid), :priority, 'open', NOW())
                     """), {"pid": pid, "priority": priority})
             db.commit()
 
@@ -62,11 +62,11 @@ def main():
             cluster_id = f"EC-{cluster_num:06d}"
             db.execute(text("""
                 INSERT INTO entity_clusters (id, cluster_id, record_ids, confidence, match_method, created_at, updated_at)
-                VALUES (gen_random_uuid(), :cid, :rids::jsonb, :conf, :method, NOW(), NOW())
+                VALUES (gen_random_uuid(), :cid, cast(:rids as jsonb), :conf, :method, NOW(), NOW())
                 ON CONFLICT (cluster_id) DO UPDATE SET record_ids = EXCLUDED.record_ids, updated_at = NOW()
             """), {
                 "cid": cluster_id,
-                "rids": str(member_ids).replace("'", '"'),
+                "rids": json.dumps(list(member_ids)),
                 "conf": 0.85 if len(member_ids) > 1 else 0.5,
                 "method": "hybrid_er",
             })
