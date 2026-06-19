@@ -141,12 +141,37 @@ def seed_transactions(conn):
         print("  ⚠ No golden records yet — transactions will be seeded after survivorship")
         return 0
 
+    # Map original customer_id (master CSV UUID) -> golden_record customer_id via email
+    master_path = RAW_DIR / "customers_master.csv"
+    orig_to_email = {}
+    if master_path.exists():
+        with open(master_path) as mf:
+            for r in csv.DictReader(mf):
+                cid = _safe(r.get("customer_id"))
+                email = _safe(r.get("email"))
+                if cid and email:
+                    orig_to_email[cid] = email.lower()
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT customer_id, email FROM golden_records WHERE email IS NOT NULL")
+        email_to_gr = {row[1].lower(): row[0] for row in cur.fetchall()}
+
+    orig_to_gr = {cid: email_to_gr[em] for cid, em in orig_to_email.items() if em in email_to_gr}
+
     with open(path) as f:
         rows = list(csv.DictReader(f))
 
     with conn.cursor() as cur:
         n = 0
+        skipped = 0
         for row in rows:
+            orig_cid = _safe(row.get("customer_id"))
+            gr_cid = orig_to_gr.get(orig_cid) if orig_cid else None
+            if not gr_cid:
+                skipped += 1
+                continue
+            country = (_safe(row.get("counterparty_country")) or "")[:3] or None
+            currency = (_safe(row.get("currency")) or "USD")[:3]
             cur.execute(
                 """
                 INSERT INTO transactions (
@@ -159,14 +184,14 @@ def seed_transactions(conn):
                 """,
                 (
                     _safe(row.get("transaction_id")) or str(uuid.uuid4()),
-                    _safe(row.get("customer_id")),
+                    gr_cid,
                     _parse_date(row.get("transaction_date")) or row.get("transaction_date"),
                     float(row.get("amount") or 0),
-                    _safe(row.get("currency")) or "USD",
+                    currency,
                     _safe(row.get("transaction_type")),
                     _safe(row.get("channel")),
                     _safe(row.get("counterparty_name")),
-                    _safe(row.get("counterparty_country")),
+                    country,
                     row.get("is_suspicious") in (True, "True", "true", "1"),
                     _safe(row.get("suspicious_reason")),
                     datetime.utcnow(),
@@ -174,7 +199,7 @@ def seed_transactions(conn):
             )
             n += 1
         conn.commit()
-    print(f"  ✓ {n} transactions seeded")
+    print(f"  ✓ {n} transactions seeded ({skipped} skipped — no matching golden record)")
     return n
 
 
