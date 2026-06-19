@@ -1,294 +1,275 @@
 import { useEffect, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { getCustomerFull, ragQuery, submitErasure } from "../lib/api";
-import { User, FileText, MessageSquare, Trash2, Lock, Eye, EyeOff } from "lucide-react";
+import { User, FileText, MessageSquare, Trash2, Lock, Shield, CheckCircle2, Send } from "lucide-react";
+import { GradientButton } from "src/components/ui/gradient-button";
+import { Progress } from "src/components/ui/progress";
+import { Skeleton } from "src/components/ui/skeleton";
 
-const DEMO_CUSTOMER_ID = "cust-0001";
+const DEMO_ID = "cust-0001";
+const MOCK_PROFILE = {
+  full_legal_name: "Alice Smith", email: "alice.smith@example.com",
+  phone: "+1 555 0101", date_of_birth: "1985-03-15",
+  address_line1: "123 Main Street", city: "New York", country: "United States",
+  kyc_status: "VERIFIED", kyc_expiry_at: "2026-08-01",
+  source_count: 3, confidence_score: 0.91,
+};
+
+type ErasureState = "idle"|"confirm"|"submitted";
 
 export default function CustomerPortal() {
-  const [customerId, setCustomerId] = useState(DEMO_CUSTOMER_ID);
-  const [inputId, setInputId] = useState(DEMO_CUSTOMER_ID);
-  const [profile, setProfile] = useState<any>(null);
-  const [tab, setTab] = useState<"profile" | "chat" | "privacy">("profile");
-  const [messages, setMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
-  const [chatInput, setChatInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [erasureState, setErasureState] = useState<"idle" | "confirm" | "submitted">("idle");
+  const [customerId, setCustomerId] = useState(DEMO_ID);
+  const [inputId, setInputId]       = useState(DEMO_ID);
+  const [profile, setProfile]       = useState<any>(null);
+  const [loading, setLoading]       = useState(true);
+  const [tab, setTab]               = useState<"profile"|"chat"|"privacy">("profile");
+  const [messages, setMessages]     = useState<Array<{role:"user"|"assistant";content:string}>>([]);
+  const [chatInput, setChatInput]   = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [erasure, setErasure]       = useState<ErasureState>("idle");
   const [erasureReason, setErasureReason] = useState("");
-  const [showRawData, setShowRawData] = useState(false);
-
-  const MOCK_PROFILE = {
-    full_legal_name: "Alice Smith",
-    email: "alice.smith@example.com",
-    phone: "+1 555 0101",
-    date_of_birth: "1985-03-15",
-    address_line1: "123 Main Street",
-    city: "New York",
-    country: "United States",
-    kyc_status: "VERIFIED",
-    kyc_expiry_at: "2026-08-01",
-    source_count: 3,
-  };
 
   useEffect(() => {
-    getCustomerFull(customerId)
-      .then(setProfile)
-      .catch(() => setProfile(MOCK_PROFILE));
+    setLoading(true);
+    getCustomerFull(customerId).then(setProfile).catch(() => setProfile(MOCK_PROFILE)).finally(() => setLoading(false));
   }, [customerId]);
 
   const send = async () => {
-    if (!chatInput.trim() || loading) return;
-    const q = chatInput;
+    if (!chatInput.trim() || chatLoading) return;
+    const q = chatInput; setChatInput(""); setChatLoading(true);
     setMessages((m) => [...m, { role: "user", content: q }]);
-    setChatInput("");
-    setLoading(true);
     try {
-      const res: any = await ragQuery({ question: q, entity_id: customerId, persona: "customer" });
-      setMessages((m) => [...m, { role: "assistant", content: res.answer ?? "I could not find information about that." }]);
+      const r: any = await ragQuery({ question: q, entity_id: customerId, persona: "customer" });
+      setMessages((m) => [...m, { role: "assistant", content: r.answer ?? "No answer available." }]);
     } catch (_) {
-      setMessages((m) => [
-        ...m,
-        {
-          role: "assistant",
-          content:
-            "I'm having trouble connecting to the service right now. " +
-            "This portal uses the customer persona — risk and PEP data are not exposed.",
-        },
-      ]);
-    } finally {
-      setLoading(false);
-    }
+      setMessages((m) => [...m, { role: "assistant", content: "Service temporarily unavailable. This portal uses a customer-safe persona — risk data is never exposed." }]);
+    } finally { setChatLoading(false); }
   };
 
   const submitRight = async () => {
-    try {
-      await submitErasure(customerId, "customer@example.com", erasureReason || "Customer GDPR erasure request");
-    } catch (_) {}
-    setErasureState("submitted");
+    try { await submitErasure(customerId, "customer@example.com", erasureReason); } catch (_) {}
+    setErasure("submitted");
   };
 
   const p = profile ?? MOCK_PROFILE;
+  const kycOk = p.kyc_status === "VERIFIED";
 
   return (
-    <div className="min-h-full bg-gradient-to-br from-slate-50 to-blue-50">
-      {/* Header */}
-      <div className="bg-white border-b border-slate-200 px-6 py-4">
-        <div className="max-w-3xl mx-auto flex items-center justify-between">
-          <div>
-            <p className="text-lg font-bold text-slate-800">My Profile</p>
-            <p className="text-slate-400 text-xs">Secure Customer Portal</p>
-          </div>
+    <div className="min-h-full bg-gradient-to-br from-blue-50 via-white to-indigo-50">
+      {/* Portal header */}
+      <div className="bg-white/80 backdrop-blur-sm border-b border-slate-200 sticky top-0 z-10">
+        <div className="max-w-2xl mx-auto px-6 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <input
-              value={inputId}
-              onChange={(e) => setInputId(e.target.value)}
-              className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none"
-              placeholder="Customer ID"
-            />
-            <button
-              onClick={() => setCustomerId(inputId)}
-              className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
-            >
-              Load
-            </button>
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center">
+              <Shield size={14} className="text-white" />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-slate-900">My Account</p>
+              <p className="text-xs text-slate-400">Secure Customer Portal</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <input value={inputId} onChange={(e) => setInputId(e.target.value)}
+              className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none w-32" placeholder="Customer ID" />
+            <GradientButton variant="indigo" size="sm" onClick={() => setCustomerId(inputId)}>Load</GradientButton>
           </div>
         </div>
       </div>
 
-      {/* Notice banner */}
-      <div className="bg-blue-600 text-white px-6 py-2 text-center text-sm">
-        <Lock size={12} className="inline mr-1" />
-        This portal uses the Customer persona — sensitive compliance and risk data is not displayed.
+      {/* Customer-safe banner */}
+      <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white text-xs py-2 text-center">
+        <Lock size={10} className="inline mr-1.5" />
+        This portal uses the <strong>customer persona</strong> — compliance, risk and PEP data are never displayed here.
       </div>
 
-      <div className="max-w-3xl mx-auto px-6 py-8">
-        {/* Welcome card */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 mb-6">
-          <div className="flex items-center gap-4">
-            <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center">
-              <User size={28} className="text-blue-600" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-slate-800">{p.full_legal_name ?? "—"}</h1>
-              <p className="text-slate-500 text-sm">{p.email}</p>
-              <div className="flex items-center gap-2 mt-1">
-                <span className={`text-xs px-2 py-0.5 rounded font-medium ${p.kyc_status === "VERIFIED" ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"}`}>
-                  {p.kyc_status ?? "—"}
-                </span>
-                {p.kyc_expiry_at && (
-                  <span className="text-xs text-slate-400">Expires {new Date(p.kyc_expiry_at).toLocaleDateString()}</span>
+      <div className="max-w-2xl mx-auto px-6 py-8 space-y-6">
+        {/* Profile card */}
+        <motion.div initial={{ opacity:0, y:20 }} animate={{ opacity:1, y:0 }}
+          className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+          {loading ? (
+            <div className="flex gap-4"><Skeleton className="w-16 h-16 rounded-full" /><div className="space-y-2 flex-1"><Skeleton className="h-5 w-48" /><Skeleton className="h-4 w-32" /></div></div>
+          ) : (
+            <div className="flex items-center gap-4">
+              <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-100 to-indigo-100 flex items-center justify-center shrink-0">
+                <User size={28} className="text-blue-600" />
+              </div>
+              <div className="flex-1">
+                <h1 className="text-xl font-bold text-slate-900">{p.full_legal_name}</h1>
+                <p className="text-slate-500 text-sm mt-0.5">{p.email}</p>
+                <div className="flex items-center gap-2 mt-2">
+                  <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${kycOk ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+                    {kycOk ? "✓" : "⚠"} {p.kyc_status}
+                  </span>
+                  {p.kyc_expiry_at && (
+                    <span className="text-xs text-slate-400">Expires {new Date(p.kyc_expiry_at).toLocaleDateString()}</span>
+                  )}
+                </div>
+                {p.confidence_score && (
+                  <div className="mt-3">
+                    <div className="flex justify-between text-xs text-slate-500 mb-1">
+                      <span>Profile completeness</span>
+                      <span>{((p.confidence_score??0)*100).toFixed(0)}%</span>
+                    </div>
+                    <Progress value={(p.confidence_score??0)*100} className="h-1.5" />
+                  </div>
                 )}
               </div>
             </div>
-          </div>
-        </div>
+          )}
+        </motion.div>
 
         {/* Tabs */}
-        <div className="flex gap-1 mb-6 bg-white rounded-xl border border-slate-100 p-1 shadow-sm">
+        <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }} transition={{ delay:0.1 }}
+          className="flex gap-1 bg-white border border-slate-100 shadow-sm rounded-xl p-1">
           {([
-            { id: "profile", label: "My Details", icon: FileText },
-            { id: "chat", label: "Ask About My Data", icon: MessageSquare },
-            { id: "privacy", label: "Privacy Rights", icon: Trash2 },
-          ] as const).map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              onClick={() => setTab(id)}
-              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                tab === id ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"
-              }`}
-            >
-              <Icon size={14} />
-              {label}
+            { id:"profile", label:"My Details", icon:FileText },
+            { id:"chat", label:"Ask a Question", icon:MessageSquare },
+            { id:"privacy", label:"My Privacy Rights", icon:Trash2 },
+          ] as const).map(({ id, label, icon:Icon }) => (
+            <button key={id} onClick={() => setTab(id)}
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                tab === id ? "bg-blue-600 text-white shadow-sm" : "text-slate-500 hover:text-slate-700 hover:bg-slate-50"
+              }`}>
+              <Icon size={14} />{label}
             </button>
           ))}
-        </div>
+        </motion.div>
 
-        {tab === "profile" && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-base font-semibold text-slate-800">Your Information</h2>
-              <button
-                onClick={() => setShowRawData(!showRawData)}
-                className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-700"
-              >
-                {showRawData ? <EyeOff size={12} /> : <Eye size={12} />}
-                {showRawData ? "Hide" : "Show"} raw values
-              </button>
-            </div>
-            <div className="space-y-3">
-              {[
-                ["Full Name", p.full_legal_name],
-                ["Email", p.email],
-                ["Phone", p.phone],
-                ["Date of Birth", p.date_of_birth ? new Date(p.date_of_birth).toLocaleDateString() : "—"],
-                ["Address", [p.address_line1, p.city].filter(Boolean).join(", ")],
-                ["Country", p.country],
-                ["KYC Status", p.kyc_status],
-                ["KYC Expiry", p.kyc_expiry_at ? new Date(p.kyc_expiry_at).toLocaleDateString() : "—"],
-                ["Data Sources", `${p.source_count ?? "?"} verified systems`],
-              ].map(([label, value]) => (
-                <div key={String(label)} className="flex justify-between py-2 border-b border-slate-50 last:border-0">
-                  <span className="text-slate-500 text-sm">{label}</span>
-                  <span className="text-slate-800 text-sm font-medium">{String(value ?? "—")}</span>
-                </div>
-              ))}
-            </div>
-            <div className="mt-4 p-3 bg-blue-50 rounded-lg">
-              <p className="text-xs text-blue-700">
-                Your data is compiled from {p.source_count ?? "multiple"} verified sources using our Golden Record process.
-                Risk and compliance data is not shown here.
-              </p>
-            </div>
-          </div>
-        )}
+        <AnimatePresence mode="wait">
+          {tab === "profile" && (
+            <motion.div key="profile" initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0, y:-10 }}
+              className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 space-y-1.5">
+              <h2 className="text-base font-bold text-slate-800 mb-4">Your Information</h2>
+              {loading ? Array.from({length:8}).map((_,i) => <Skeleton key={i} className="h-9 w-full" />) : (
+                [
+                  ["Full Name", p.full_legal_name],
+                  ["Email", p.email],
+                  ["Phone", p.phone],
+                  ["Date of Birth", p.date_of_birth ? new Date(p.date_of_birth).toLocaleDateString() : "—"],
+                  ["Address", [p.address_line1, p.city].filter(Boolean).join(", ")],
+                  ["Country", p.country],
+                  ["KYC Status", p.kyc_status],
+                  ["Data Sources", `${p.source_count ?? "?"} verified systems`],
+                ].map(([k, v]) => (
+                  <div key={String(k)} className="flex justify-between items-center py-2 border-b border-slate-50 last:border-0">
+                    <span className="text-sm text-slate-500">{k}</span>
+                    <span className="text-sm font-semibold text-slate-800">{String(v ?? "—")}</span>
+                  </div>
+                ))
+              )}
+              <div className="mt-4 p-3 bg-blue-50 rounded-xl text-xs text-blue-700 border border-blue-100">
+                <Lock size={11} className="inline mr-1.5" />
+                Risk assessment, compliance status, and internal flags are not displayed in this portal.
+              </div>
+            </motion.div>
+          )}
 
-        {tab === "chat" && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-            <div className="h-72 overflow-y-auto p-4 space-y-3 bg-slate-50">
-              {messages.length === 0 && (
-                <div className="text-center text-slate-400 mt-8">
-                  <MessageSquare size={32} className="mx-auto mb-2 opacity-40" />
-                  <p className="text-sm">Ask questions about your data</p>
-                  <div className="mt-3 space-y-1">
-                    {["What data do you hold about me?", "What is my KYC status?"].map((q) => (
-                      <button key={q} onClick={() => setChatInput(q)} className="block w-full text-xs text-left px-3 py-1.5 bg-white rounded-lg text-slate-600 hover:bg-blue-50 border border-slate-100">
+          {tab === "chat" && (
+            <motion.div key="chat" initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0, y:-10 }}
+              className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+              <div className="h-72 overflow-y-auto p-5 space-y-3 bg-slate-50">
+                {messages.length === 0 ? (
+                  <div className="text-center text-slate-400 py-8">
+                    <MessageSquare size={32} className="mx-auto mb-2 opacity-30" />
+                    <p className="text-sm font-medium">Ask questions about your data</p>
+                    {["What data do you hold about me?","What is my KYC status?","What documents are on file?"].map((q) => (
+                      <button key={q} onClick={() => setChatInput(q)}
+                        className="block w-full mt-2 text-xs text-left px-3 py-2 bg-white rounded-xl border border-slate-100 text-slate-600 hover:border-blue-200 hover:text-blue-700 transition-all">
                         {q}
                       </button>
                     ))}
                   </div>
-                </div>
-              )}
-              {messages.map((m, i) => (
-                <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                  <div className={`max-w-xs rounded-xl px-4 py-2.5 text-sm ${m.role === "user" ? "bg-blue-600 text-white" : "bg-white border border-slate-200 text-slate-800"}`}>
-                    {m.content}
-                  </div>
-                </div>
-              ))}
-              {loading && (
-                <div className="flex justify-start">
-                  <div className="bg-white border border-slate-200 rounded-xl px-4 py-2.5">
-                    <div className="flex gap-1">
-                      {[0, 1, 2].map((i) => (
-                        <div key={i} className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
-                      ))}
+                ) : (
+                  messages.map((m, i) => (
+                    <motion.div key={i} initial={{ opacity:0, y:8 }} animate={{ opacity:1, y:0 }}
+                      className={`flex ${m.role==="user" ? "justify-end" : "justify-start"}`}>
+                      <div className={`max-w-xs rounded-2xl px-4 py-2.5 text-sm ${m.role==="user" ? "bg-blue-600 text-white" : "bg-white border border-slate-100 text-slate-800 shadow-sm"}`}>
+                        {m.content}
+                      </div>
+                    </motion.div>
+                  ))
+                )}
+                {chatLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-white border border-slate-100 rounded-2xl px-4 py-3 shadow-sm">
+                      <div className="flex gap-1">
+                        {[0,1,2].map((i) => (
+                          <motion.div key={i} animate={{ y:[0,-4,0] }} transition={{ repeat:Infinity, duration:0.7, delay:i*0.15 }}
+                            className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
-            </div>
-            <div className="p-4 border-t border-slate-100 flex gap-3">
-              <input
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && send()}
-                placeholder="Ask about your data…"
-                className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-              />
-              <button onClick={send} disabled={!chatInput.trim() || loading} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-blue-700">
-                Send
-              </button>
-            </div>
-          </div>
-        )}
-
-        {tab === "privacy" && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 space-y-5">
-            <h2 className="text-base font-semibold text-slate-800">Your Privacy Rights (GDPR)</h2>
-
-            <div className="space-y-3">
-              {[
-                { right: "Right to Access", desc: "Download all data we hold about you as JSON", action: "Download My Data" },
-                { right: "Right to Rectification", desc: "Request correction of inaccurate data", action: "Request Correction" },
-              ].map((r) => (
-                <div key={r.right} className="flex justify-between items-center p-4 bg-slate-50 rounded-xl">
-                  <div>
-                    <p className="font-medium text-slate-800 text-sm">{r.right}</p>
-                    <p className="text-slate-500 text-xs">{r.desc}</p>
-                  </div>
-                  <button className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 hover:bg-white">
-                    {r.action}
-                  </button>
-                </div>
-              ))}
-
-              <div className="p-4 bg-red-50 rounded-xl border border-red-100">
-                <p className="font-medium text-red-800 text-sm">Right to Erasure</p>
-                <p className="text-red-600 text-xs mt-0.5">Request deletion of all your data (Article 17 GDPR)</p>
-
-                {erasureState === "idle" && (
-                  <button
-                    onClick={() => setErasureState("confirm")}
-                    className="mt-3 px-4 py-2 bg-red-600 text-white rounded-lg text-xs font-medium hover:bg-red-700 flex items-center gap-1.5"
-                  >
-                    <Trash2 size={12} /> Request Erasure
-                  </button>
-                )}
-
-                {erasureState === "confirm" && (
-                  <div className="mt-3 space-y-2">
-                    <p className="text-red-700 text-xs font-medium">⚠️ This will delete all records. Regulatory holds (PEP/Sanctioned) prevent deletion.</p>
-                    <textarea
-                      value={erasureReason}
-                      onChange={(e) => setErasureReason(e.target.value)}
-                      placeholder="Reason for erasure request (optional)"
-                      className="w-full border border-red-200 rounded-lg px-3 py-2 text-xs resize-none h-16 focus:outline-none bg-white"
-                    />
-                    <div className="flex gap-2">
-                      <button onClick={submitRight} className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-medium hover:bg-red-700">Confirm</button>
-                      <button onClick={() => setErasureState("idle")} className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 hover:bg-white">Cancel</button>
-                    </div>
-                  </div>
-                )}
-
-                {erasureState === "submitted" && (
-                  <p className="mt-3 text-xs text-green-700 bg-green-50 px-3 py-2 rounded-lg">
-                    ✅ Request submitted. You will receive confirmation within 30 days.
-                  </p>
                 )}
               </div>
-            </div>
-          </div>
-        )}
+              <div className="p-4 border-t border-slate-100 flex gap-3">
+                <input value={chatInput} onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => e.key==="Enter" && send()}
+                  placeholder="Type your question…"
+                  className="flex-1 border border-slate-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-slate-50" />
+                <GradientButton variant="indigo" size="md" onClick={send} disabled={!chatInput.trim() || chatLoading}>
+                  <Send size={14} />
+                </GradientButton>
+              </div>
+            </motion.div>
+          )}
+
+          {tab === "privacy" && (
+            <motion.div key="privacy" initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0, y:-10 }}
+              className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 space-y-4">
+              <h2 className="text-base font-bold text-slate-800">Your GDPR Rights</h2>
+              {[
+                { right:"Right to Access", desc:"Download all data we hold as JSON", action:"Download", color:"blue" as const },
+                { right:"Right to Rectification", desc:"Request correction of inaccurate data", action:"Request Correction", color:"indigo" as const },
+              ].map((r) => (
+                <div key={r.right} className="flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-100">
+                  <div>
+                    <p className="font-semibold text-slate-800 text-sm">{r.right}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">{r.desc}</p>
+                  </div>
+                  <GradientButton variant={r.color} size="sm">{r.action}</GradientButton>
+                </div>
+              ))}
+
+              <div className="p-4 bg-red-50 rounded-xl border border-red-100 space-y-3">
+                <div>
+                  <p className="font-semibold text-red-800 text-sm">Right to Erasure (Article 17 GDPR)</p>
+                  <p className="text-xs text-red-600 mt-0.5">Request deletion of all your data. Note: regulatory holds prevent deletion of sanctioned/PEP records.</p>
+                </div>
+
+                <AnimatePresence mode="wait">
+                  {erasure === "idle" && (
+                    <motion.div key="idle" initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }}>
+                      <GradientButton variant="red" size="sm" onClick={() => setErasure("confirm")}>
+                        <Trash2 size={13} /> Request Erasure
+                      </GradientButton>
+                    </motion.div>
+                  )}
+                  {erasure === "confirm" && (
+                    <motion.div key="confirm" initial={{ opacity:0, y:5 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0 }} className="space-y-2">
+                      <p className="text-xs text-red-700 font-semibold">⚠️ This is irreversible. All records will be permanently deleted.</p>
+                      <textarea value={erasureReason} onChange={(e) => setErasureReason(e.target.value)}
+                        placeholder="Reason (optional)" rows={2}
+                        className="w-full text-xs border border-red-200 rounded-lg px-3 py-2 bg-white focus:outline-none resize-none" />
+                      <div className="flex gap-2">
+                        <GradientButton variant="red" size="sm" onClick={submitRight}>Confirm Delete</GradientButton>
+                        <button onClick={() => setErasure("idle")}
+                          className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-slate-600 hover:bg-white">Cancel</button>
+                      </div>
+                    </motion.div>
+                  )}
+                  {erasure === "submitted" && (
+                    <motion.div key="submitted" initial={{ opacity:0, scale:0.9 }} animate={{ opacity:1, scale:1 }}
+                      className="flex items-center gap-2 p-3 bg-emerald-50 rounded-lg border border-emerald-200">
+                      <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                      <p className="text-xs text-emerald-700 font-medium">Request submitted. You'll receive confirmation within 30 days.</p>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
