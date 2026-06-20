@@ -153,7 +153,7 @@ def patch_stewardship_queue(db):
         db.commit()
         print(f"  ✓ stewardship_queue populated: {r.rowcount} entries")
     else:
-        # Downgrade some auto_merged to pending for demo
+        # Downgrade 50 lowest-confidence auto_merged pairs to pending for demo
         r = db.execute(text("""
             WITH demoted AS (
                 UPDATE match_pairs
@@ -161,8 +161,7 @@ def patch_stewardship_queue(db):
                 WHERE id IN (
                     SELECT id FROM match_pairs
                     WHERE status = 'auto_merged'
-                      AND match_probability BETWEEN 0.70 AND 0.85
-                    ORDER BY match_probability DESC
+                    ORDER BY match_probability ASC
                     LIMIT 50
                 )
                 RETURNING id
