@@ -62,7 +62,6 @@ def patch_confidence_scores(db):
                 WHEN source_count = 2  THEN 0.72
                 ELSE 0.50
             END
-        WHERE confidence_score IS NULL OR confidence_score = 0.5
     """))
     db.commit()
     r = db.execute(text("SELECT AVG(confidence_score), MIN(confidence_score), MAX(confidence_score) FROM golden_records")).fetchone()
@@ -101,21 +100,32 @@ def patch_kyc_expiry(db):
 
 
 def patch_emails(db):
-    # Pull email from source_records into golden_records where golden record has null email
+    # source_records links to golden_records via entity_clusters.record_ids
+    # Use JSON unnest to join: cluster → source_record → email → golden_record
     r = db.execute(text("""
         UPDATE golden_records gr
         SET email = sub.email
         FROM (
-            SELECT DISTINCT ON (customer_id) customer_id, email
-            FROM source_records
-            WHERE email IS NOT NULL AND email <> ''
-            ORDER BY customer_id, updated_at DESC NULLS LAST
+            SELECT ec.cluster_id,
+                   MIN(sr.email) AS email
+            FROM entity_clusters ec
+            JOIN source_records sr
+              ON sr.id::text = ANY(
+                    SELECT jsonb_array_elements_text(
+                        CASE jsonb_typeof(ec.record_ids)
+                            WHEN 'array' THEN ec.record_ids
+                            ELSE ec.record_ids::jsonb
+                        END
+                    )
+                 )
+            WHERE sr.email IS NOT NULL AND sr.email <> ''
+            GROUP BY ec.cluster_id
         ) sub
-        WHERE gr.customer_id = cast(sub.customer_id as uuid)
+        WHERE gr.cluster_id = sub.cluster_id
           AND (gr.email IS NULL OR gr.email = '')
     """))
     db.commit()
-    print(f"  ✓ emails backfilled: {r.rowcount} rows")
+    print(f"  ✓ emails backfilled via cluster join: {r.rowcount} rows")
 
 
 def patch_stewardship_queue(db):
