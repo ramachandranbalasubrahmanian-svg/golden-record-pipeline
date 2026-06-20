@@ -18,11 +18,10 @@ BOOST_CONFIG = {
 REGULATORY_CHUNK_TYPES = {"kyc_compliance", "sanctions_pep"}
 
 
-def embed_query(question: str, openai_client) -> list[float]:
-    response = openai_client.embeddings.create(
-        input=[question], model="text-embedding-3-small"
-    )
-    return response.data[0].embedding
+def embed_query(question: str, _client=None) -> list[float]:
+    from sentence_transformers import SentenceTransformer
+    model = SentenceTransformer("all-MiniLM-L6-v2")
+    return model.encode([question])[0].tolist()
 
 
 def vector_search(
@@ -34,10 +33,10 @@ def vector_search(
     vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
     sql = text("""
         SELECT id, customer_id, chunk_type, content, metadata,
-               1 - (embedding <=> :query_vec::vector) AS similarity_score
+               1 - (embedding <=> cast(:query_vec as vector)) AS similarity_score
         FROM rag_chunks
-        WHERE (:entity_id IS NULL OR customer_id = :entity_id::uuid)
-        ORDER BY embedding <=> :query_vec::vector
+        WHERE (:entity_id IS NULL OR customer_id = cast(:entity_id as uuid))
+        ORDER BY embedding <=> cast(:query_vec as vector)
         LIMIT :top_k
     """)
     rows = db.execute(sql, {"query_vec": vec_str, "entity_id": entity_id, "top_k": top_k}).fetchall()
@@ -148,10 +147,10 @@ def retrieve(
     entity_id: Optional[str],
     persona: str,
     db: Session,
-    openai_client,
+    openai_client=None,
     top_k: int = 5,
 ) -> list[dict]:
-    embedding = embed_query(question, openai_client)
+    embedding = embed_query(question)
     vector_results = vector_search(embedding, entity_id, db, top_k=20)
     bm25_results = bm25_search(question, vector_results, top_k=20)
     merged = reciprocal_rank_fusion(vector_results, bm25_results)

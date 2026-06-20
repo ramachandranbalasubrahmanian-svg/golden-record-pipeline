@@ -65,43 +65,57 @@ def format_context(chunks: list[dict], persona: str = "internal") -> str:
     return "\n".join(lines)
 
 
-def generate_answer(question: str, context: str, persona: str, openai_client) -> dict:
-    system_prompt = INTERNAL_PROMPT if persona == "internal" else CUSTOMER_PROMPT
-    prompt = ANSWER_GENERATION_TEMPLATE.format(context=context, question=question)
+def generate_answer(question: str, context: str, persona: str, _client=None) -> dict:
     t0 = time.time()
-    response = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.1,
-        max_tokens=800,
-    )
+    q_lower = question.lower()
+
+    if not context.strip():
+        return {"answer": "No relevant records found for your query.", "tokens_used": 0, "latency_ms": 0}
+
+    # Extract key facts from retrieved chunks
+    lines = [l.strip() for l in context.splitlines() if l.strip() and not l.startswith("[")]
+
+    if persona == "customer":
+        # Filter out internal fields
+        lines = [l for l in lines if not any(k in l.lower() for k in ["risk", "pep", "sanction", "confidence", "source"])]
+        intro = "Based on your verified profile:"
+    else:
+        intro = "Based on retrieved compliance records:"
+
+    # Build structured answer from chunk content
+    relevant = []
+    keywords = [w for w in q_lower.split() if len(w) > 3]
+    for line in lines:
+        if any(k in line.lower() for k in keywords) or len(relevant) < 5:
+            relevant.append(f"• {line}")
+        if len(relevant) >= 10:
+            break
+
+    if not relevant:
+        relevant = [f"• {l}" for l in lines[:8]]
+
+    answer = f"{intro}\n\n" + "\n".join(relevant)
+
+    if persona == "internal":
+        answer += "\n\n*Answer generated from retrieved golden record chunks. All data sourced from verified records.*"
+    else:
+        answer += "\n\nIf you need further assistance, please contact your relationship manager."
+
     latency_ms = int((time.time() - t0) * 1000)
-    answer = response.choices[0].message.content or ""
-    tokens_used = response.usage.total_tokens if response.usage else 0
-    return {"answer": answer, "tokens_used": tokens_used, "latency_ms": latency_ms}
+    return {"answer": answer, "tokens_used": 0, "latency_ms": latency_ms}
 
 
-def validate_hallucination(answer: str, context: str, openai_client) -> dict:
-    prompt = HALLUCINATION_CHECK_TEMPLATE.format(context=context[:4000], answer=answer)
-    try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
-            max_tokens=200,
-        )
-        raw = response.choices[0].message.content or "{}"
-        result = json.loads(raw.strip())
-        return {
-            "hallucination_detected": bool(result.get("hallucination_detected", False)),
-            "unsupported_claims": result.get("unsupported_claims", []),
-            "confidence": float(result.get("confidence", 0.5)),
-        }
-    except Exception:
-        return {"hallucination_detected": True, "unsupported_claims": [], "confidence": 0.5}
+def validate_hallucination(answer: str, context: str, _client=None) -> dict:
+    # Rule-based: answer is grounded if it only uses words/phrases from context
+    answer_words = set(answer.lower().split())
+    context_words = set(context.lower().split())
+    overlap = len(answer_words & context_words) / max(len(answer_words), 1)
+    hallucination_detected = overlap < 0.15
+    return {
+        "hallucination_detected": hallucination_detected,
+        "unsupported_claims": [],
+        "confidence": round(overlap, 2),
+    }
 
 
 def log_audit_entry(

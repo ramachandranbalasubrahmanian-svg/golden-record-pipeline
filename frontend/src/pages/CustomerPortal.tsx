@@ -6,7 +6,7 @@ import { GradientButton } from "src/components/ui/gradient-button";
 import { Progress } from "src/components/ui/progress";
 import { Skeleton } from "src/components/ui/skeleton";
 
-const DEMO_ID = "cust-0001";
+const DEMO_ID = "d8ed19ca-705d-469c-8d19-75d9d9f776c6";
 const MOCK_PROFILE = {
   full_legal_name: "Alice Smith", email: "alice.smith@example.com",
   phone: "+1 555 0101", date_of_birth: "1985-03-15",

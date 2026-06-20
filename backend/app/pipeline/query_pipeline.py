@@ -23,10 +23,9 @@ DEMO_QUERIES = [
 
 def run_rag_query(query: RAGQueryIn, db: Session) -> RAGAnswerOut:
     t0 = time.time()
-    client = openai.OpenAI(api_key=settings.openai_api_key)
     entity_id = str(query.entity_id) if query.entity_id else None
 
-    chunks = retrieve(query.question, entity_id, query.persona, db, client, query.top_k)
+    chunks = retrieve(query.question, entity_id, query.persona, db, top_k=query.top_k)
 
     if not chunks:
         return RAGAnswerOut(
@@ -40,8 +39,8 @@ def run_rag_query(query: RAGQueryIn, db: Session) -> RAGAnswerOut:
         )
 
     context = format_context(chunks, query.persona)
-    gen_result = generate_answer(query.question, context, query.persona, client)
-    hallucination = validate_hallucination(gen_result["answer"], context, client)
+    gen_result = generate_answer(query.question, context, query.persona)
+    hallucination = validate_hallucination(gen_result["answer"], context)
 
     sources = [
         RAGSourceChunk(
