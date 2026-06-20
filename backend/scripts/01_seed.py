@@ -21,11 +21,23 @@ _host, _port = (_host_port.split(":", 1) if ":" in _host_port else (_host_port, 
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 
 
+_KYC_MAP = {
+    "active": "VERIFIED", "inactive": "EXPIRED", "verified": "VERIFIED",
+    "pending": "PENDING", "failed": "FAILED", "expired": "EXPIRED",
+    "reject": "FAILED", "rejected": "FAILED", "approve": "VERIFIED", "approved": "VERIFIED",
+}
+
 def _safe(v):
     if v is None:
         return None
     s = str(v).strip()
     return None if s in ("", "nan", "None", "NaT") else s
+
+def _norm_kyc(v):
+    raw = _safe(v)
+    if not raw:
+        return None
+    return _KYC_MAP.get(raw.lower(), raw.upper())
 
 
 def _parse_date(v):
@@ -109,7 +121,7 @@ def seed_source_records(conn):
                         _safe(row.get("city")),
                         _safe(row.get("country")),
                         _safe(row.get("nationality")),
-                        _safe(row.get("kyc_status")),
+                        _norm_kyc(row.get("kyc_status")),
                         _safe(row.get("kyc_tier")),
                         _safe(row.get("risk_rating")),
                         row.get("is_pep") in (True, "True", "true", "1"),

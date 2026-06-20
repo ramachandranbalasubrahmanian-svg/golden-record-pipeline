@@ -82,7 +82,7 @@ def main():
             if rid not in clustered_ids:
                 cid = _safe(row.get("customer_id")) or str(uuid.uuid4())
                 gr_simple = dict(row)
-                gr_simple["confidence_score"] = 0.50
+                gr_simple["confidence_score"] = 0.55
                 gr_simple["source_count"] = 1
                 gr_simple["winning_sources"] = {
                     k: row.get("source_system") for k in ["first_name", "last_name", "email"]
