@@ -1,4 +1,4 @@
-const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const BASE = import.meta.env.VITE_API_URL ?? "https://refreshing-liberation-production-8a25.up.railway.app";
 const KEY = import.meta.env.VITE_API_KEY ?? "demo-key-2026";
 
 const headers = () => ({
