@@ -145,7 +145,7 @@ def patch_stewardship_queue(db):
     if pending > 0:
         r = db.execute(text("""
             INSERT INTO stewardship_queue (id, pair_id, priority, status, created_at)
-            SELECT gen_random_uuid(), id, 'MEDIUM', 'OPEN', NOW()
+            SELECT gen_random_uuid(), id, 5, 'open', NOW()
             FROM match_pairs
             WHERE status = 'pending'
             ON CONFLICT DO NOTHING
@@ -168,7 +168,7 @@ def patch_stewardship_queue(db):
                 RETURNING id
             )
             INSERT INTO stewardship_queue (id, pair_id, priority, status, created_at)
-            SELECT gen_random_uuid(), id, 'MEDIUM', 'OPEN', NOW()
+            SELECT gen_random_uuid(), id, 5, 'open', NOW()
             FROM demoted
         """))
         db.commit()
